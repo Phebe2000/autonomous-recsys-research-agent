@@ -129,3 +129,26 @@ checkpoints only by official validation primary:
   --data-dir KuaiRand-Pure/data \
   --state-root tracks/agent_a/runtime
 ```
+
+## Milestone 5: unified candidates and evidence
+
+`candidate.py` defines the strict, serializable candidate contract. Its identity
+hash covers the dataset content fingerprint, canonical training configuration,
+candidate schema, and code version. Disabled modules are distinct from enabled
+modules with explicit zero weights, and unsupported History/BPR/Multi-task
+combinations are rejected.
+
+`unified_runner.py` dispatches to the existing baseline, Listwise, History, BPR,
+and Multi-task trainer entrypoints without duplicating their mathematics. It
+reuses exact terminal configurations before reservation and emits one guarded
+validation-only result schema.
+
+The inspect command never authorizes training or reserves a trial. It rebuilds
+the evidence registry and JSON/Markdown ablation reports directly from the
+fingerprint ledger:
+
+```bash
+.venv/bin/python -m tracks.agent_a.unified_inspect \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/runtime
+```
