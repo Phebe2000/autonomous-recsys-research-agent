@@ -17,13 +17,16 @@ from sqlalchemy.pool import NullPool
 
 from .candidate import (
     AuxiliaryConfig,
+    BackboneConfig,
     BPRConfig,
     CandidateConfig,
     CandidateSpec,
     HistoryConfig,
     ListwiseConfig,
     OptimizerConfig,
+    RankerConfig,
 )
+from .compliance import JudgedRunCompliance, WallClockExceeded
 from .contracts import ContractError, TrialOutcome, ValidationMetrics, reject_test_data
 from .runner import TrialPruned, TrialRunner, TrialSpec
 from .selection import write_top1
@@ -121,6 +124,9 @@ class SyntheticExecutor:
             "bpr": -0.0005,
             "click": 0.003,
             "play": 0.0025,
+            "ranker": 0.006,
+            "ensemble": 0.007,
+            "ranker_wide": 0.0055,
         }[module]
         smooth = max(0.0, 0.001 - 0.0008 * abs(math.log10(lr) - math.log10(1e-6)))
         primary = 0.60 + gain + smooth
@@ -157,6 +163,7 @@ class AutonomousResearchLoop:
         simulation: bool,
         max_trials: int = 50,
         convergence_enabled: bool = True,
+        compliance: JudgedRunCompliance | None = None,
     ) -> None:
         if not 1 <= max_trials <= MAX_TRIALS:
             raise ValueError("max_trials must be in [1, 50]")
@@ -169,6 +176,12 @@ class AutonomousResearchLoop:
         self.simulation = simulation
         self.max_trials = max_trials
         self.convergence_enabled = convergence_enabled
+        self.compliance = compliance
+        if compliance is not None:
+            if compliance.policy.dataset_fingerprint != dataset_fingerprint:
+                raise ValueError("compliance policy fingerprint mismatch")
+            if compliance.policy.max_iterations != max_trials:
+                raise ValueError("compliance policy budget mismatch")
         self.store = ResearchStore(
             self.state_dir / "research.sqlite3", dataset_fingerprint, max_trials=max_trials
         )
@@ -232,6 +245,26 @@ class AutonomousResearchLoop:
                     0.001, 1.0,
                 ),
             )
+        if module in {"ranker", "ensemble", "ranker_wide"}:
+            ensemble = module == "ensemble"
+            leaves = 63 if module == "ranker_wide" else 31
+            ranker_lr = 0.04
+            estimators = 160
+            if trial is not None:
+                leaves = trial.suggest_categorical("ranker_num_leaves", [15, 31, 63])
+                ranker_lr = trial.suggest_float("ranker_learning_rate", 0.02, 0.08, log=True)
+                estimators = trial.suggest_categorical("ranker_n_estimators", [100, 160, 240])
+            return replace(
+                base,
+                backbone=BackboneConfig(
+                    "fm_lambdarank_ensemble" if ensemble else "lambdarank", 16
+                ),
+                ranker=RankerConfig(
+                    True, "causal_behavioral_v1", 20.0, estimators,
+                    ranker_lr, leaves, 50, 20,
+                ),
+                listwise=ListwiseConfig(enabled=False),
+            )
         raise ValueError(f"unsupported module: {module}")
 
     def _anchor(self, ordinal: int) -> tuple[str, str, CandidateConfig]:
@@ -239,9 +272,9 @@ class AutonomousResearchLoop:
             1: ("A-01", "baseline"),
             2: ("A-02", "listwise"),
             3: ("A-03", "history"),
-            4: ("A-04", "bpr"),
-            5: ("A-05", "click"),
-            6: ("A-06", "play"),
+            4: ("A-04", "ranker"),
+            5: ("A-05", "ensemble"),
+            6: ("A-06", "ranker_wide"),
         }
         anchor_id, module = definitions[ordinal]
         return anchor_id, module, self._module_config(module)
@@ -255,7 +288,10 @@ class AutonomousResearchLoop:
         }
         reference = anchors.get("A-02")
         result = {"listwise": {"eligible": True, "gain": 0.0}}
-        for anchor_id, module in (("A-03", "history"), ("A-04", "bpr"), ("A-05", "click"), ("A-06", "play")):
+        for anchor_id, module in (
+            ("A-03", "history"), ("A-04", "ranker"),
+            ("A-05", "ensemble"), ("A-06", "ranker_wide"),
+        ):
             observed = anchors.get(anchor_id)
             gain = None if reference is None or observed is None else (
                 observed["validation"]["primary"] - reference["validation"]["primary"]
@@ -309,6 +345,12 @@ class AutonomousResearchLoop:
 
     @staticmethod
     def _module_name(config: CandidateConfig) -> str:
+        if config.ranker.enabled:
+            return (
+                "ensemble"
+                if config.backbone.kind == "fm_lambdarank_ensemble"
+                else "ranker"
+            )
         if not config.listwise.enabled:
             return "baseline"
         if config.history.enabled:
@@ -350,17 +392,28 @@ class AutonomousResearchLoop:
         fatal = self.state_dir / "fatal_stop.json"
         if fatal.exists():
             return json.loads(fatal.read_text())["reason"]
+        if self.compliance is not None and self.compliance.wall_clock_exhausted():
+            return "wall_clock_exhausted"
         if self.store.consumed >= self.max_trials:
             return "budget_exhausted"
-        if not self.convergence_enabled or self.store.consumed < 6 + CONVERGENCE_N:
+        epsilon = EPSILON if self.compliance is None else self.compliance.policy.epsilon
+        convergence_n = (
+            CONVERGENCE_N if self.compliance is None else self.compliance.policy.convergence_n
+        )
+        minimum_scored = (
+            6 + convergence_n
+            if self.compliance is None
+            else self.compliance.policy.minimum_scored_iterations
+        )
+        if not self.convergence_enabled:
             return None
         completed = [trial for trial in self.store.trials() if trial["status"] == "completed"]
-        if len(completed) < 6 + CONVERGENCE_N:
+        if len(completed) < minimum_scored:
             return None
         values = [trial["validation"]["primary"] for trial in completed]
-        prior_best = max(values[:-CONVERGENCE_N])
-        if max(values[-CONVERGENCE_N:]) < prior_best + EPSILON:
-            return f"converged_no_{EPSILON}_gain_for_{CONVERGENCE_N}_completed_trials"
+        prior_best = max(values[:-convergence_n])
+        if max(values[-convergence_n:]) <= prior_best + epsilon:
+            return f"converged_no_{epsilon}_gain_for_{convergence_n}_scored_iterations"
         return None
 
     def _fatal_stop(self, reason: str) -> None:
@@ -427,9 +480,12 @@ class AutonomousResearchLoop:
             "bpr": "fm_user_soft_target_listnet_same_user_bpr_regularized",
             "click": "fm_user_soft_target_listnet_multitask_auxiliary",
             "play": "fm_user_soft_target_listnet_multitask_auxiliary",
+            "ranker": "train_causal_behavioral_lambdarank",
+            "ensemble": "train_causal_behavioral_lambdarank_fm_ensemble",
+            "ranker_wide": "train_causal_behavioral_lambdarank_wide",
         }[module]
 
-    def step(
+    def _step_impl(
         self,
         executor: Callable[[dict, CandidateSpec, str, ValidationReporter], TrialOutcome],
         *,
@@ -441,6 +497,16 @@ class AutonomousResearchLoop:
             return {"status": "stopped", "stop_reason": reason}
         optuna_trial, anchor_id, module, spec, ordinal = self._stage()
         if interrupt_after_ask:
+            self.store.record_agent_decision(
+                stage="recovery",
+                decision="pause_after_optuna_ask",
+                rationale="The interruption fixture stops after suggestion so resume behavior is auditable.",
+                evidence={"optuna_trial_number": optuna_trial.number, "ordinal": ordinal},
+                alternatives=("continue_to_budget_reservation",),
+                selected_action="persist_optuna_mapping_and_resume_later",
+                actor="agent-a-autonomous-loop",
+                decision_key=f"optuna-{optuna_trial.number}:pause-after-ask",
+            )
             return {"status": "interrupted_after_ask", "optuna_trial_number": optuna_trial.number}
         bound = self._find_binding(optuna_trial.number)
         exact = self._find_identity(spec.identity)
@@ -450,22 +516,77 @@ class AutonomousResearchLoop:
             self.study.tell(optuna_trial, reward)
             if not self.simulation:
                 write_top1(self.store, self.state_dir / "top1.json")
+            self.store.record_agent_decision(
+                stage="candidate_reuse",
+                decision="reuse_exact_completed_candidate",
+                rationale="The canonical identity already has a completed validation result, so retraining would waste budget.",
+                evidence={"config_identity": spec.identity, "validation": exact["validation"]},
+                alternatives=("reserve_duplicate_training_trial",),
+                selected_action=f"reuse_{exact['trial_id']}",
+                actor="agent-a-autonomous-loop",
+                trial_id=exact["trial_id"],
+                decision_key=f"optuna-{optuna_trial.number}:exact-reuse",
+            )
             return {"status": "reused", "trial_id": exact["trial_id"], "reward": reward}
         if bound is None:
+            hypothesis = (
+                f"Evaluate {module} during {phase_for_ordinal(ordinal)} using only "
+                "training data and validation.primary feedback."
+            )
+            code_diff = ""
             ledger_config = {
                 **spec.ledger_config(),
                 "optuna": {"study_name": self.study.study_name, "trial_number": optuna_trial.number},
                 "autonomous": {"phase": phase_for_ordinal(ordinal), "anchor_id": anchor_id, "module": module},
+                "research_action": {
+                    "hypothesis": hypothesis,
+                    "code_diff": code_diff,
+                    "code_diff_sha256": hashlib.sha256(code_diff.encode()).hexdigest(),
+                    "change_kind": "preimplemented_anchor" if anchor_id else "configuration_only",
+                    "generated_by": "agent-a-autonomous-planner",
+                    "manual_intervention": False,
+                },
                 "simulation": self.simulation,
             }
             bound = self.store.reserve(
                 self._method_for_module(module),
-                f"{phase_for_ordinal(ordinal)} candidate",
+                hypothesis,
                 ledger_config,
                 spec.config.seed,
             )
             optuna_trial.set_user_attr("ledger_trial_id", bound["trial_id"])
+            self.store.record_agent_decision(
+                stage="candidate_selection",
+                decision="execute_candidate",
+                rationale=hypothesis,
+                evidence={
+                    "phase": phase_for_ordinal(ordinal),
+                    "module": module,
+                    "anchor_id": anchor_id,
+                    "config_identity": spec.identity,
+                    "budget_before_execution": {
+                        "used": self.store.consumed,
+                        "remaining": self.store.remaining,
+                    },
+                },
+                alternatives=("skip_candidate", "reuse_exact_candidate_if_available"),
+                selected_action=f"train_and_validate_{bound['trial_id']}",
+                actor="agent-a-autonomous-planner",
+                trial_id=bound["trial_id"],
+                decision_key=f"{bound['trial_id']}:execute",
+            )
         if interrupt_after_reserve:
+            self.store.record_agent_decision(
+                stage="recovery",
+                decision="pause_after_budget_reservation",
+                rationale="The interruption fixture preserves the consumed reservation for resume verification.",
+                evidence={"optuna_trial_number": optuna_trial.number},
+                alternatives=("start_training_now",),
+                selected_action="resume_same_reserved_trial_later",
+                actor="agent-a-autonomous-loop",
+                trial_id=bound["trial_id"],
+                decision_key=f"{bound['trial_id']}:pause-after-reserve",
+            )
             return {
                 "status": "interrupted_after_reserve",
                 "optuna_trial_number": optuna_trial.number,
@@ -476,10 +597,32 @@ class AutonomousResearchLoop:
             self.study.tell(optuna_trial, reward)
             if not self.simulation:
                 write_top1(self.store, self.state_dir / "top1.json")
+            self.store.record_agent_decision(
+                stage="recovery",
+                decision="restore_completed_trial_to_sampler",
+                rationale="Resume found a completed ledger result whose Optuna state still required tell().",
+                evidence={"validation": bound["validation"], "optuna_trial_number": optuna_trial.number},
+                alternatives=("retrain_completed_candidate", "discard_completed_result"),
+                selected_action="tell_existing_validation_reward",
+                actor="agent-a-autonomous-loop",
+                trial_id=bound["trial_id"],
+                decision_key=f"{bound['trial_id']}:recover-completed",
+            )
             return {"status": "recovered_completed", "trial_id": bound["trial_id"], "reward": reward}
         if bound["status"] in {"failed", "pruned"}:
             state = TrialState.PRUNED if bound["status"] == "pruned" else TrialState.FAIL
             self.study.tell(optuna_trial, state=state)
+            self.store.record_agent_decision(
+                stage="recovery",
+                decision=f"restore_{bound['status']}_trial_to_sampler",
+                rationale="Resume preserves the terminal ledger status without retrying or refunding budget.",
+                evidence={"status": bound["status"], "error": bound["error"]},
+                alternatives=("retry_and_double_count", "erase_terminal_trial"),
+                selected_action=f"tell_optuna_{bound['status']}",
+                actor="agent-a-autonomous-loop",
+                trial_id=bound["trial_id"],
+                decision_key=f"{bound['trial_id']}:recover-{bound['status']}",
+            )
             return {"status": f"recovered_{bound['status']}", "trial_id": bound["trial_id"]}
 
         reporter = ValidationReporter(optuna_trial)
@@ -493,17 +636,86 @@ class AutonomousResearchLoop:
             completed = runner.execute(runner_spec, candidate, resume_trial_id=bound["trial_id"])
         except Exception as exc:
             self.study.tell(optuna_trial, state=TrialState.FAIL)
+            self.store.record_agent_decision(
+                stage="candidate_disposition",
+                decision="reject_failed_candidate",
+                rationale="Candidate execution did not produce an admissible completed validation result.",
+                evidence={"error_type": type(exc).__name__, "error": str(exc)},
+                alternatives=("promote_without_validation", "refund_budget"),
+                selected_action="retain_failure_and_exclude_from_top1",
+                actor="agent-a-autonomous-loop",
+                trial_id=bound["trial_id"],
+                decision_key=f"{bound['trial_id']}:failed-disposition",
+            )
             if isinstance(exc, (ContractError, ValueError)):
                 self._fatal_stop(str(exc))
+            if isinstance(exc, WallClockExceeded):
+                return {
+                    "status": "failed",
+                    "trial_id": bound["trial_id"],
+                    "stop_reason": "wall_clock_exhausted",
+                }
             raise
         if completed["status"] == "pruned":
             self.study.tell(optuna_trial, state=TrialState.PRUNED)
+            self.store.record_agent_decision(
+                stage="candidate_disposition",
+                decision="retain_pruned_candidate_as_evidence",
+                rationale="Validation-only pruning stopped the candidate and the consumed budget remains permanent.",
+                evidence={"status": "pruned", "error": completed["error"]},
+                alternatives=("promote_pruned_candidate", "refund_budget"),
+                selected_action="exclude_from_top1",
+                actor="agent-a-autonomous-loop",
+                trial_id=completed["trial_id"],
+                decision_key=f"{completed['trial_id']}:pruned-disposition",
+            )
             return {"status": "pruned", "trial_id": completed["trial_id"]}
         reward = completed["validation"]["primary"]
         self.study.tell(optuna_trial, reward)
         if not self.simulation:
             write_top1(self.store, self.state_dir / "top1.json")
+        best = self.store.best_trial()
+        promoted = best is not None and best["trial_id"] == completed["trial_id"]
+        self.store.record_agent_decision(
+            stage="candidate_disposition",
+            decision="promote_validation_top1" if promoted else "retain_as_ablation_evidence",
+            rationale=(
+                "Candidate is the stable validation.primary leader."
+                if promoted else
+                "Candidate completed but did not exceed the stable validation.primary leader."
+            ),
+            evidence={
+                "candidate_validation": completed["validation"],
+                "top1_trial_id": None if best is None else best["trial_id"],
+                "top1_validation": None if best is None else best["validation"],
+                "selection_rule": "validation.primary_then_lowest_ordinal",
+            },
+            alternatives=("select_by_auxiliary_metric", "select_by_hidden_result"),
+            selected_action="update_top1_manifest" if promoted else "keep_current_top1",
+            actor="agent-a-autonomous-loop",
+            trial_id=completed["trial_id"],
+            decision_key=f"{completed['trial_id']}:completed-disposition",
+        )
         return {"status": "completed", "trial_id": completed["trial_id"], "reward": reward}
+
+    def step(
+        self,
+        executor: Callable[[dict, CandidateSpec, str, ValidationReporter], TrialOutcome],
+        *,
+        interrupt_after_ask: bool = False,
+        interrupt_after_reserve: bool = False,
+    ) -> dict[str, Any]:
+        if self.compliance is not None and self.stop_reason() is None:
+            self.compliance.start_if_needed()
+        try:
+            return self._step_impl(
+                executor,
+                interrupt_after_ask=interrupt_after_ask,
+                interrupt_after_reserve=interrupt_after_reserve,
+            )
+        finally:
+            if self.compliance is not None:
+                self.compliance.write_audit(self.store)
 
     def run(
         self,
@@ -518,6 +730,22 @@ class AutonomousResearchLoop:
             attempts += 1
             if attempts > target * 5:
                 raise RuntimeError("too many duplicate suggestions without budget progress")
+        reason = self.stop_reason()
+        if reason is not None:
+            self.store.record_agent_decision(
+                stage="stopping",
+                decision="stop_research_loop",
+                rationale=f"The predeclared stopping policy returned: {reason}.",
+                evidence={
+                    "stop_reason": reason,
+                    "budget": {"used": self.store.consumed, "remaining": self.store.remaining},
+                    "best_validation": None if self.store.best_trial() is None else self.store.best_trial()["validation"],
+                },
+                alternatives=("continue_beyond_policy",),
+                selected_action="preserve_validation_best_and_stop",
+                actor="agent-a-autonomous-loop",
+                decision_key=f"stop:{reason}",
+            )
         report = self.report(events)
         _atomic_json(self.state_dir / "autonomous_report.json", report)
         return report
@@ -546,8 +774,11 @@ class AutonomousResearchLoop:
             "best_validation": None if best is None else best["validation"],
             "best_trial_id": None if best is None else best["trial_id"],
             "stop_reason": self.stop_reason(),
-            "epsilon": EPSILON,
-            "convergence_n": CONVERGENCE_N,
+            "epsilon": EPSILON if self.compliance is None else self.compliance.policy.epsilon,
+            "convergence_n": CONVERGENCE_N if self.compliance is None else self.compliance.policy.convergence_n,
+            "minimum_scored_iterations": None if self.compliance is None else self.compliance.policy.minimum_scored_iterations,
+            "wall_clock_seconds": None if self.compliance is None else self.compliance.policy.wall_clock_seconds,
+            "elapsed_wall_clock_seconds": None if self.compliance is None else self.compliance.elapsed_seconds(),
             "events": [] if events is None else events,
             "test_metrics_used": False,
         }
@@ -569,6 +800,25 @@ class AutonomousResearchLoop:
             "validation": best["validation"],
             "selection": "validation.primary with lowest ordinal stable tie-break",
             "test_metrics_used": False,
+            "hidden_labels_loaded": False,
+            "run_policy_identity": None if self.compliance is None else self.compliance.policy.identity,
         }
+        self.store.record_agent_decision(
+            stage="final_selection",
+            decision="lock_validation_best_checkpoint",
+            rationale="The final checkpoint is selected only by validation.primary with the predeclared stable tie-break.",
+            evidence={
+                "trial_id": best["trial_id"],
+                "validation": best["validation"],
+                "selection_rule": "validation.primary_then_lowest_ordinal",
+            },
+            alternatives=("select_by_hidden_result", "select_by_auxiliary_metric"),
+            selected_action=f"lock_{best['trial_id']}",
+            actor="agent-a-autonomous-loop",
+            trial_id=best["trial_id"],
+            decision_key="final-lock",
+        )
         _atomic_json(path, manifest)
+        if self.compliance is not None:
+            self.compliance.write_audit(self.store)
         return manifest

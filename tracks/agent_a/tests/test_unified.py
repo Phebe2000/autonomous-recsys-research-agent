@@ -5,11 +5,13 @@ from unittest.mock import patch
 
 from tracks.agent_a.candidate import (
     AuxiliaryConfig,
+    BackboneConfig,
     BPRConfig,
     CandidateConfig,
     CandidateSpec,
     HistoryConfig,
     ListwiseConfig,
+    RankerConfig,
 )
 from tracks.agent_a.contracts import ContractError, TrialOutcome, ValidationMetrics
 from tracks.agent_a.evidence import build_evidence_registry
@@ -87,7 +89,7 @@ class CandidateIdentityTest(unittest.TestCase):
         variants = [
             CandidateSpec("sha256:other", config),
             CandidateSpec(FINGERPRINT, config, code_version="v2"),
-            CandidateSpec(FINGERPRINT, config, schema_version=2),
+            CandidateSpec(FINGERPRINT, config, schema_version=3),
         ]
         self.assertTrue(all(item.identity != base.identity for item in variants))
 
@@ -108,6 +110,15 @@ class CandidateIdentityTest(unittest.TestCase):
             CandidateConfig.from_mapping({"unknown": 1})
         with self.assertRaises(ValueError):
             CandidateConfig(auxiliary=AuxiliaryConfig(True, 0.0, 0.01, None, 0.001, 1.0))
+        with self.assertRaises(ValueError):
+            CandidateConfig(backbone=BackboneConfig("lambdarank", 16))
+        with self.assertRaises(ValueError):
+            CandidateConfig(
+                ranker=RankerConfig(
+                    True, "causal_behavioral_v1", 20.0, 160,
+                    0.04, 31, 50, 20,
+                )
+            )
 
 
 class UnifiedRunnerTest(unittest.TestCase):
@@ -124,6 +135,14 @@ class UnifiedRunnerTest(unittest.TestCase):
             "bpr": CandidateConfig(bpr=BPRConfig(True, 0.01)),
             "multitask": CandidateConfig(
                 auxiliary=AuxiliaryConfig(True, 0.01, 0.0, None, 0.001, 1.0)
+            ),
+            "ranker": CandidateConfig(
+                backbone=BackboneConfig("lambdarank", 16),
+                ranker=RankerConfig(
+                    True, "causal_behavioral_v1", 20.0, 160,
+                    0.04, 31, 50, 20,
+                ),
+                listwise=ListwiseConfig(enabled=False),
             ),
         }
         for expected, config in configs.items():
@@ -183,7 +202,12 @@ class EvidenceTest(unittest.TestCase):
             self.assertEqual(registry["top1"]["trial_id"], "trial-15")
             self.assertEqual(
                 registry["default_current_candidate_modules"],
-                ["no_history_soft_target_listnet", "history_last20_fixed_gate_minus_0_05"],
+                [
+                    "no_history_soft_target_listnet",
+                    "history_last20_fixed_gate_minus_0_05",
+                    "causal_behavioral_lambdarank",
+                    "fm_lambdarank_ensemble",
+                ],
             )
             history = registry["modules"]["history_last20_fixed_gate_minus_0_05"]
             self.assertEqual(history["classification"], "positive_below_epsilon")
@@ -193,6 +217,10 @@ class EvidenceTest(unittest.TestCase):
                 self.assertFalse(module["enabled_for_current_search"])
                 self.assertTrue(module["eligible_as_new_dataset_anchor"])
                 self.assertEqual(module["new_dataset_evidence"], "unobserved_requires_controlled_validation")
+            for name in ("causal_behavioral_lambdarank", "fm_lambdarank_ensemble"):
+                module = registry["modules"][name]
+                self.assertEqual(module["classification"], "not_observed")
+                self.assertTrue(module["enabled_for_current_search"])
 
     def test_inspect_cli_path_neither_trains_nor_changes_ledger(self):
         with tempfile.TemporaryDirectory() as directory:

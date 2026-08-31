@@ -9,8 +9,8 @@ from typing import Any, Mapping, TypeVar
 from .fingerprint import canonical_json
 
 
-CANDIDATE_SCHEMA_VERSION = 1
-CODE_VERSION = "agent-a-unified-candidate-v1"
+CANDIDATE_SCHEMA_VERSION = 2
+CODE_VERSION = "agent-a-unified-candidate-v2"
 T = TypeVar("T")
 
 
@@ -32,8 +32,40 @@ class BackboneConfig:
     latent_dim: int = 16
 
     def validate(self) -> None:
-        if self.kind != "fm" or self.latent_dim <= 0:
-            raise ValueError("only a positive-dimensional FM backbone is supported")
+        if self.kind not in {"fm", "lambdarank", "fm_lambdarank_ensemble"}:
+            raise ValueError("unsupported candidate backbone")
+        if self.latent_dim <= 0:
+            raise ValueError("backbone latent dimension must be positive")
+
+
+@dataclass(frozen=True)
+class RankerConfig:
+    enabled: bool = False
+    feature_schema: str | None = None
+    smoothing: float | None = None
+    n_estimators: int | None = None
+    learning_rate: float | None = None
+    num_leaves: int | None = None
+    min_child_samples: int | None = None
+    validation_interval: int | None = None
+
+    def validate(self) -> None:
+        values = (
+            self.feature_schema, self.smoothing, self.n_estimators,
+            self.learning_rate, self.num_leaves, self.min_child_samples,
+            self.validation_interval,
+        )
+        if not self.enabled and any(value is not None for value in values):
+            raise ValueError("disabled ranker must not carry active settings")
+        if self.enabled:
+            if self.feature_schema != "causal_behavioral_v1":
+                raise ValueError("enabled ranker requires the causal behavioral feature schema")
+            numeric = (
+                self.smoothing, self.n_estimators, self.learning_rate,
+                self.num_leaves, self.min_child_samples, self.validation_interval,
+            )
+            if any(value is None or value <= 0 for value in numeric):
+                raise ValueError("enabled ranker requires positive explicit hyperparameters")
 
 
 @dataclass(frozen=True)
@@ -170,6 +202,7 @@ class ResourceLimits:
 @dataclass(frozen=True)
 class CandidateConfig:
     backbone: BackboneConfig = field(default_factory=BackboneConfig)
+    ranker: RankerConfig = field(default_factory=RankerConfig)
     listwise: ListwiseConfig = field(default_factory=ListwiseConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     bpr: BPRConfig = field(default_factory=BPRConfig)
@@ -181,7 +214,7 @@ class CandidateConfig:
 
     def __post_init__(self) -> None:
         for value in (
-            self.backbone, self.listwise, self.history, self.bpr,
+            self.backbone, self.ranker, self.listwise, self.history, self.bpr,
             self.auxiliary, self.optimizer, self.initialization, self.resources,
         ):
             value.validate()
@@ -192,6 +225,11 @@ class CandidateConfig:
             raise ValueError("history, BPR, and auxiliary tasks cannot be combined in current capabilities")
         if enabled_modules and not self.listwise.enabled:
             raise ValueError("history, BPR, and auxiliary tasks require Listwise")
+        ranker_backbone = self.backbone.kind in {"lambdarank", "fm_lambdarank_ensemble"}
+        if self.ranker.enabled != ranker_backbone:
+            raise ValueError("ranker enabled state must match the selected backbone")
+        if ranker_backbone and (self.listwise.enabled or enabled_modules):
+            raise ValueError("ranker candidates cannot also enable Listwise, History, BPR, or auxiliary tasks")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "CandidateConfig":
@@ -202,6 +240,7 @@ class CandidateConfig:
         kwargs = dict(value)
         nested = {
             "backbone": BackboneConfig,
+            "ranker": RankerConfig,
             "listwise": ListwiseConfig,
             "history": HistoryConfig,
             "bpr": BPRConfig,

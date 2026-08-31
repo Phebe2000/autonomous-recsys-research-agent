@@ -183,6 +183,116 @@ class ResearchStore:
         with self._transaction() as db:
             self._event(db, trial_id, "note", {"message": message})
 
+    def add_event(self, kind: str, payload: dict, trial_id: str | None = None) -> None:
+        reject_test_data(payload, "event")
+        with self._transaction() as db:
+            if trial_id is not None:
+                row = db.execute("SELECT 1 FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
+                if row is None:
+                    raise KeyError(trial_id)
+            self._event(db, trial_id, kind, payload)
+
+    def record_agent_decision(
+        self,
+        *,
+        stage: str,
+        decision: str,
+        rationale: str,
+        evidence: dict[str, Any],
+        selected_action: str,
+        alternatives: tuple[str, ...] | list[str] = (),
+        actor: str = "agent-a",
+        trial_id: str | None = None,
+        decision_key: str | None = None,
+        data_scope: str = "train_and_validation_only",
+    ) -> dict[str, Any]:
+        """Append one validation-only, hash-chained research decision.
+
+        `decision_key` makes lifecycle decisions idempotent across resume. The
+        journal is stored inside the same persistent SQLite authority as trials.
+        """
+        text_fields = {
+            "stage": stage,
+            "decision": decision,
+            "rationale": rationale,
+            "selected_action": selected_action,
+            "actor": actor,
+        }
+        if any(not isinstance(value, str) or not value.strip() for value in text_fields.values()):
+            raise ValueError("agent decision text fields must be non-empty strings")
+        if decision_key is not None and (
+            not isinstance(decision_key, str) or not decision_key.strip()
+        ):
+            raise ValueError("decision_key must be a non-empty string when supplied")
+        if not isinstance(evidence, dict):
+            raise TypeError("agent decision evidence must be a mapping")
+        if data_scope not in {"train_and_validation_only", "label_free_locked_inference"}:
+            raise ValueError("invalid agent decision data scope")
+        alternatives = list(alternatives)
+        if not all(isinstance(item, str) and item.strip() for item in alternatives):
+            raise ValueError("agent decision alternatives must be non-empty strings")
+        core = {
+            "schema_version": 1,
+            **text_fields,
+            "evidence": evidence,
+            "alternatives": alternatives,
+            "decision_key": decision_key,
+            "data_scope": data_scope,
+        }
+        reject_test_data(core, "agent_decision")
+        with self._transaction() as db:
+            if trial_id is not None:
+                row = db.execute("SELECT 1 FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
+                if row is None:
+                    raise KeyError(trial_id)
+            rows = db.execute(
+                "SELECT payload_json FROM memory_events WHERE kind='agent_decision' "
+                "ORDER BY event_id"
+            ).fetchall()
+            decoded = [json.loads(row["payload_json"]) for row in rows]
+            if decision_key is not None:
+                existing = next(
+                    (item for item in decoded if item.get("decision_key") == decision_key), None
+                )
+                if existing is not None:
+                    return existing
+            previous = None if not decoded else decoded[-1]["decision_sha256"]
+            payload = {**core, "previous_decision_sha256": previous}
+            payload["decision_sha256"] = hashlib.sha256(
+                canonical_json(payload).encode()
+            ).hexdigest()
+            self._event(db, trial_id, "agent_decision", payload)
+        return payload
+
+    def update_research_action(
+        self,
+        trial_id: str,
+        hypothesis: str,
+        config: dict[str, Any],
+    ) -> dict:
+        """Attach a generated proposal after reserve but before completion.
+
+        Reservation intentionally precedes LLM generation so generation errors
+        consume the official iteration budget. Only active trials may be amended.
+        """
+        reject_test_data(config, "config")
+        config_json = canonical_json(config)
+        config_hash = hashlib.sha256(config_json.encode()).hexdigest()
+        with self._transaction() as db:
+            self._require_status(db, trial_id, {"reserved", "running"})
+            db.execute(
+                "UPDATE trials SET hypothesis=?,config_json=?,config_hash=?,updated_at=? "
+                "WHERE trial_id=?",
+                (hypothesis, config_json, config_hash, _now(), trial_id),
+            )
+            self._event(
+                db,
+                trial_id,
+                "research_action_attached",
+                {"config_hash": config_hash},
+            )
+        return self.get(trial_id)
+
     def get(self, trial_id: str) -> dict:
         with self._read() as db:
             row = db.execute("SELECT * FROM trials WHERE trial_id=?", (trial_id,)).fetchone()
@@ -194,6 +304,37 @@ class ResearchStore:
         with self._read() as db:
             rows = db.execute("SELECT * FROM trials ORDER BY ordinal").fetchall()
         return [self._decode(row) for row in rows]
+
+    def events(self) -> list[dict]:
+        with self._read() as db:
+            rows = db.execute(
+                "SELECT event_id,trial_id,kind,payload_json,created_at "
+                "FROM memory_events ORDER BY event_id"
+            ).fetchall()
+        return [
+            {
+                "event_id": int(row["event_id"]),
+                "trial_id": row["trial_id"],
+                "kind": row["kind"],
+                "payload": json.loads(row["payload_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def decisions(self) -> list[dict[str, Any]]:
+        """Return the verified append-only agent decision chain."""
+        decisions = [event for event in self.events() if event["kind"] == "agent_decision"]
+        previous = None
+        for event in decisions:
+            payload = event["payload"]
+            digest = payload.get("decision_sha256")
+            unsigned = {key: value for key, value in payload.items() if key != "decision_sha256"}
+            expected = hashlib.sha256(canonical_json(unsigned).encode()).hexdigest()
+            if payload.get("previous_decision_sha256") != previous or digest != expected:
+                raise ValueError("agent decision journal hash chain is invalid")
+            previous = digest
+        return decisions
 
     def best_trial(self) -> dict | None:
         with self._read() as db:

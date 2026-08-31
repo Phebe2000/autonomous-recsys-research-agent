@@ -10,11 +10,13 @@ from typing import Any, Callable
 
 from .candidate import (
     AuxiliaryConfig,
+    BackboneConfig,
     BPRConfig,
     CandidateConfig,
     CandidateSpec,
     HistoryConfig,
     ListwiseConfig,
+    RankerConfig,
 )
 from .store import ResearchStore
 
@@ -55,6 +57,28 @@ def anchor_candidates(fingerprint: str) -> dict[str, CandidateSpec]:
                     play_time_weight=0.0, play_transform=None,
                     head_learning_rate=0.001, huber_delta=1.0,
                 )
+            ),
+        ),
+        "causal_behavioral_lambdarank": CandidateSpec(
+            fingerprint,
+            CandidateConfig(
+                backbone=BackboneConfig("lambdarank", 16),
+                ranker=RankerConfig(
+                    True, "causal_behavioral_v1", 20.0, 160,
+                    0.04, 31, 50, 20,
+                ),
+                listwise=ListwiseConfig(enabled=False),
+            ),
+        ),
+        "fm_lambdarank_ensemble": CandidateSpec(
+            fingerprint,
+            CandidateConfig(
+                backbone=BackboneConfig("fm_lambdarank_ensemble", 16),
+                ranker=RankerConfig(
+                    True, "causal_behavioral_v1", 20.0, 160,
+                    0.04, 31, 50, 20,
+                ),
+                listwise=ListwiseConfig(enabled=False),
             ),
         ),
     }
@@ -143,6 +167,15 @@ def build_evidence_registry(store: ResearchStore) -> dict[str, Any]:
     multitask = _completed(
         trials, lambda trial: trial["method"] == "fm_user_soft_target_listnet_multitask_auxiliary"
     )
+    ranker = _completed(
+        trials, lambda trial: trial["method"] in {
+            "train_causal_behavioral_lambdarank",
+            "train_causal_behavioral_lambdarank_wide",
+        }
+    )
+    ensemble = _completed(
+        trials, lambda trial: trial["method"] == "train_causal_behavioral_lambdarank_fm_ensemble"
+    )
     modules = {
         "official_fm_baseline": _module_entry(
             "official_fm_baseline", baseline, reference_primary,
@@ -163,6 +196,14 @@ def build_evidence_registry(store: ResearchStore) -> dict[str, Any]:
         "multitask_weights": _module_entry(
             "multitask_weights", multitask, reference_primary,
             anchors["multitask_weights"], True, False,
+        ),
+        "causal_behavioral_lambdarank": _module_entry(
+            "causal_behavioral_lambdarank", ranker, reference_primary,
+            anchors["causal_behavioral_lambdarank"], True, True,
+        ),
+        "fm_lambdarank_ensemble": _module_entry(
+            "fm_lambdarank_ensemble", ensemble, reference_primary,
+            anchors["fm_lambdarank_ensemble"], True, True,
         ),
     }
     top = store.best_trial()
@@ -190,6 +231,8 @@ def build_evidence_registry(store: ResearchStore) -> dict[str, Any]:
         "default_current_candidate_modules": [
             "no_history_soft_target_listnet",
             "history_last20_fixed_gate_minus_0_05",
+            "causal_behavioral_lambdarank",
+            "fm_lambdarank_ensemble",
         ],
         "modules": modules,
     }

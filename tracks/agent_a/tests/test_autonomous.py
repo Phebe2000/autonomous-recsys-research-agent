@@ -76,7 +76,10 @@ class PhaseAndBudgetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             loop = make_loop(Path(directory), max_trials=6)
             loop.run(SyntheticExecutor(), 6)
-            self.assertEqual(loop.eligible_modules(), ["listwise", "history", "click", "play"])
+            self.assertEqual(
+                loop.eligible_modules(),
+                ["listwise", "history", "ranker", "ensemble", "ranker_wide"],
+            )
             self.assertNotIn("bpr", loop.eligible_modules())
 
     def test_convergence_never_fires_before_all_anchors(self):

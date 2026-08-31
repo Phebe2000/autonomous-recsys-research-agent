@@ -21,6 +21,7 @@ ROUTE_BINDINGS = {
     "history": "tracks.agent_a.history_pipeline:_train_history",
     "bpr": "tracks.agent_a.bpr_pipeline:_train_bpr",
     "multitask": "tracks.agent_a.multitask_pipeline:_train_multitask",
+    "ranker": "tracks.agent_a.ranker:train_ranker_candidate",
 }
 
 
@@ -30,6 +31,8 @@ class TrainingNotAuthorized(RuntimeError):
 
 def dispatch_route(spec: CandidateSpec) -> str:
     config = spec.config
+    if config.ranker.enabled:
+        return "ranker"
     if not config.listwise.enabled:
         if config.history.enabled or config.bpr.enabled or config.auxiliary.enabled:
             raise ValueError("baseline route cannot enable ranking modules")

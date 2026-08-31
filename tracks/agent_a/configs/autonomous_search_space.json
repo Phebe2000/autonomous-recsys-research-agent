@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sampler": {"name": "Optuna.TPESampler", "seed": 0},
   "objective": "validation.primary",
   "epsilon": 0.002,
@@ -26,9 +26,9 @@
     "warmup_steps": {"type": "categorical", "choices": [20, 50, 100]},
     "history_last_n": {"type": "categorical", "choices": [20, 50, 100]},
     "history_gate": {"type": "float", "low": -0.1, "high": -0.01},
-    "bpr_weight": {"type": "float", "low": 0.005, "high": 0.1, "log": true},
-    "click_weight": {"type": "float", "low": 0.005, "high": 0.05, "log": true},
-    "play_weight": {"type": "float", "low": 0.005, "high": 0.05, "log": true}
+    "ranker_learning_rate": {"type": "float", "low": 0.02, "high": 0.08, "log": true},
+    "ranker_num_leaves": {"type": "categorical", "choices": [15, 31, 63]},
+    "ranker_n_estimators": {"type": "categorical", "choices": [100, 160, 240]}
   },
   "conditional_policy": "expand a module only after positive validation gain over its fingerprint Listwise anchor"
 }

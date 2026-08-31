@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from data import encode, load
-
 from .auxiliary import load_training_auxiliary, read_training_identities
 from .bpr_pipeline import _train_bpr
 from .candidate import CandidateSpec
@@ -14,6 +12,9 @@ from .history_pipeline import _load_baseline, _train_history
 from .listwise import group_user_exposures
 from .multitask_pipeline import _train_multitask
 from .pipeline import train_baseline_candidate, train_listnet_candidate
+from .behavioral_features import build_behavioral_features
+from .ranker import train_ranker_candidate
+from .safe_data import encode_research_splits, load_research_splits
 from .store import ResearchStore
 
 
@@ -31,13 +32,15 @@ class RealCandidateExecutor:
         self.state_dir = Path(state_dir)
         self.store = store
         self.fingerprint = fingerprint
-        self.splits = load(str(data_dir))
-        self.enc, self.dim = encode(self.splits)
+        self.splits = load_research_splits(data_dir)
+        self.enc, self.encoder = encode_research_splits(self.splits)
+        self.dim = self.encoder.dimension
         self._baseline = None
         self._baseline_artifact = None
         self._groups = None
         self._history = None
         self._auxiliary = None
+        self._ranker_features = {}
 
     def _load_shared(self):
         if self._baseline is None:
@@ -100,6 +103,28 @@ class RealCandidateExecutor:
                 prior,
                 artifact_dir / "listnet.npz",
                 self.fingerprint,
+            )
+            return outcome
+        if module in {"ranker", "ensemble", "ranker_wide"}:
+            ranker = spec.config.ranker
+            cache_key = float(ranker.smoothing)
+            if cache_key not in self._ranker_features:
+                self._ranker_features[cache_key] = build_behavioral_features(
+                    self.data_dir, self.enc, self.encoder, "valid", cache_key
+                )
+            _, outcome = train_ranker_candidate(
+                self.enc,
+                self._ranker_features[cache_key],
+                baseline,
+                artifact_dir / "ranker.npz",
+                self.fingerprint,
+                ensemble=module == "ensemble",
+                seed=spec.config.seed,
+                n_estimators=int(ranker.n_estimators),
+                learning_rate=float(ranker.learning_rate),
+                num_leaves=int(ranker.num_leaves),
+                min_child_samples=int(ranker.min_child_samples),
+                validation_interval=int(ranker.validation_interval),
             )
             return outcome
         legacy = {
