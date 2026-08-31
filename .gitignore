@@ -1,0 +1,30 @@
+# Dataset — never push organizer data
+KuaiRand-Pure/
+data/
+
+# Training artifacts
+outputs/
+runs/
+results_by_track/**/checkpoints/
+submission.csv
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editors and macOS
+.DS_Store
+.vscode/
+.idea/
+
+# Local Codex state
+.codex/
