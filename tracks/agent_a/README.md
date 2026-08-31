@@ -42,8 +42,8 @@ tracks/agent_a/check.sh
   --epsilon 0.002 --convergence-n 3 --minimum-scored-iterations 9
 
 # First reservation starts the persistent six-hour clock. Iterations 1-6 are
-# controlled anchors; later trials alternate conditional unified refinement and
-# the Codex code-generation provider.
+# controlled anchors; trials 7-14 are an evidence-driven local screen, and only
+# later phases alternate conditional refinement with the code-generation provider.
 .venv/bin/python -m tracks.agent_a.judged_cli run \
   --data-dir KuaiRand-Pure/data --provider-model gpt-5.6-sol
 .venv/bin/python -m tracks.agent_a.judged_cli resume \
@@ -59,9 +59,10 @@ tracks/agent_a/check.sh
   --data-dir KuaiRand-Pure/data --split test
 ```
 
-After the six anchors, odd-numbered trials use conditional unified/Optuna
-refinement while even-numbered trials use the installed Codex CLI read-only to return a
-schema-constrained research proposal and NumPy source module. Agent A validates
+After the six anchors, trials 7-14 use a controlled local grid around the only
+positive ranker anchor. If convergence has not already stopped the run, later
+phases alternate conditional unified/Optuna refinement and read-only Codex
+code-generation. Agent A validates
 the AST, records and materializes the exact unified diff, trains it against a
 label-safe context, evaluates with the official validation function, and asks a
 separate reflection turn to guide the next proposal. Generated code can engineer
@@ -95,3 +96,7 @@ Simulation remains isolated under an explicit synthetic fingerprint:
 ```bash
 .venv/bin/python -m tracks.agent_a.autonomous_cli simulate --max-trials 50
 ```
+
+The complete system design and executed Pure workflow are available in both
+[中文](WORKFLOW_AND_ARCHITECTURE.md) and
+[English](WORKFLOW_AND_ARCHITECTURE_EN.md).

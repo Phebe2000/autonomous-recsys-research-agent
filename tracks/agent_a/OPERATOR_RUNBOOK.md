@@ -71,9 +71,11 @@ tied and future labels are excluded. Validation and final inference aggregates
 are frozen from train. The ranker checkpoint records its feature-schema digest,
 LightGBM model text, selected validation iteration and any FM blend weight.
 
-From iteration 7 onward, odd-numbered trials use the unified conditional
-screening/TPE path for modules with positive fingerprint-local evidence;
-even-numbered trials use the coding provider. The provider receives only
+Trials 7-14 are a controlled local screen around the positive A-05
+FM+LambdaRank ensemble evidence. The grid fixes or varies blend weight, tree
+count, and leaf count one axis at a time. If the predeclared convergence rule
+has not stopped the run, later phases alternate the unified conditional
+screening/TPE path with the coding provider. The provider receives only
 validation-safe research evidence and proposes a self-contained NumPy candidate. Each proposal
 must state a hypothesis, rationale, expected metric effect, reflection plan and
 resource estimate. The provider runs read-only: it cannot edit the repository.
