@@ -164,6 +164,7 @@ class AutonomousResearchLoop:
         max_trials: int = 50,
         convergence_enabled: bool = True,
         compliance: JudgedRunCompliance | None = None,
+        research_code_diff: str = "",
     ) -> None:
         if not 1 <= max_trials <= MAX_TRIALS:
             raise ValueError("max_trials must be in [1, 50]")
@@ -177,6 +178,7 @@ class AutonomousResearchLoop:
         self.max_trials = max_trials
         self.convergence_enabled = convergence_enabled
         self.compliance = compliance
+        self.research_code_diff = research_code_diff
         if compliance is not None:
             if compliance.policy.dataset_fingerprint != dataset_fingerprint:
                 raise ValueError("compliance policy fingerprint mismatch")
@@ -314,10 +316,31 @@ class AutonomousResearchLoop:
         if phase == "controlled_anchors":
             anchor_id, module, config = self._anchor(ordinal)
         elif phase == "single_module_screening":
-            eligible = self.eligible_modules() or ["listwise"]
-            module = eligible[(ordinal - 7) % len(eligible)]
-            lr = 3e-7 * (10 ** ((ordinal - 7) / 7))
-            config = self._module_config(module, lr=lr, warmup=(20, 50, 100)[(ordinal - 7) % 3])
+            # A-05 was the only controlled ranker anchor with positive evidence.
+            # Trials 7-14 are a predeclared local screen around its 0.5 blend,
+            # 160 trees and 31 leaves. Each row changes one axis where possible.
+            screens = {
+                7: (0.35, 160, 31),
+                8: (0.45, 160, 31),
+                9: (0.55, 160, 31),
+                10: (0.65, 160, 31),
+                11: (0.50, 100, 31),
+                12: (0.50, 240, 31),
+                13: (0.50, 160, 15),
+                14: (0.50, 160, 63),
+            }
+            blend, estimators, leaves = screens[ordinal]
+            module = "ensemble"
+            base = self._module_config(module)
+            config = replace(
+                base,
+                ranker=replace(
+                    base.ranker,
+                    blend_weight=blend,
+                    n_estimators=estimators,
+                    num_leaves=leaves,
+                ),
+            )
             anchor_id = None
         elif phase in {"tpe_conditional_search", "local_refinement"}:
             eligible = self.eligible_modules() or ["listwise"]
@@ -533,7 +556,7 @@ class AutonomousResearchLoop:
                 f"Evaluate {module} during {phase_for_ordinal(ordinal)} using only "
                 "training data and validation.primary feedback."
             )
-            code_diff = ""
+            code_diff = "" if anchor_id else self.research_code_diff
             ledger_config = {
                 **spec.ledger_config(),
                 "optuna": {"study_name": self.study.study_name, "trial_number": optuna_trial.number},
@@ -730,6 +753,13 @@ class AutonomousResearchLoop:
             attempts += 1
             if attempts > target * 5:
                 raise RuntimeError("too many duplicate suggestions without budget progress")
+        self.record_stop_decision()
+        report = self.report(events)
+        _atomic_json(self.state_dir / "autonomous_report.json", report)
+        return report
+
+    def record_stop_decision(self) -> None:
+        """Persist the predeclared terminal decision exactly once."""
         reason = self.stop_reason()
         if reason is not None:
             self.store.record_agent_decision(
@@ -746,9 +776,6 @@ class AutonomousResearchLoop:
                 actor="agent-a-autonomous-loop",
                 decision_key=f"stop:{reason}",
             )
-        report = self.report(events)
-        _atomic_json(self.state_dir / "autonomous_report.json", report)
-        return report
 
     def report(self, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         best = self.store.best_trial()

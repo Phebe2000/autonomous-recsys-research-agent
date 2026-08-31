@@ -82,6 +82,25 @@ class PhaseAndBudgetTest(unittest.TestCase):
             )
             self.assertNotIn("bpr", loop.eligible_modules())
 
+    def test_single_module_screen_is_a05_local_grid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = make_loop(Path(directory), max_trials=14)
+            loop.run(SyntheticExecutor(), 14)
+            expected = {
+                7: (0.35, 160, 31), 8: (0.45, 160, 31),
+                9: (0.55, 160, 31), 10: (0.65, 160, 31),
+                11: (0.50, 100, 31), 12: (0.50, 240, 31),
+                13: (0.50, 160, 15), 14: (0.50, 160, 63),
+            }
+            for ordinal, values in expected.items():
+                trial = loop.store.get(f"trial-{ordinal:02d}")
+                ranker = trial["config"]["unified_candidate"]["candidate"]["ranker"]
+                self.assertEqual(trial["config"]["autonomous"]["module"], "ensemble")
+                self.assertEqual(
+                    (ranker["blend_weight"], ranker["n_estimators"], ranker["num_leaves"]),
+                    values,
+                )
+
     def test_convergence_never_fires_before_all_anchors(self):
         with tempfile.TemporaryDirectory() as directory:
             loop = make_loop(Path(directory), max_trials=20, convergence=True)

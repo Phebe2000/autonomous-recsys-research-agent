@@ -9,8 +9,8 @@ from typing import Any, Mapping, TypeVar
 from .fingerprint import canonical_json
 
 
-CANDIDATE_SCHEMA_VERSION = 2
-CODE_VERSION = "agent-a-unified-candidate-v2"
+CANDIDATE_SCHEMA_VERSION = 3
+CODE_VERSION = "agent-a-unified-candidate-v3"
 T = TypeVar("T")
 
 
@@ -48,6 +48,7 @@ class RankerConfig:
     num_leaves: int | None = None
     min_child_samples: int | None = None
     validation_interval: int | None = None
+    blend_weight: float | None = None
 
     def validate(self) -> None:
         values = (
@@ -66,6 +67,8 @@ class RankerConfig:
             )
             if any(value is None or value <= 0 for value in numeric):
                 raise ValueError("enabled ranker requires positive explicit hyperparameters")
+            if self.blend_weight is not None and not 0 < self.blend_weight <= 1:
+                raise ValueError("ranker blend weight must be in (0, 1]")
 
 
 @dataclass(frozen=True)
@@ -228,6 +231,11 @@ class CandidateConfig:
         ranker_backbone = self.backbone.kind in {"lambdarank", "fm_lambdarank_ensemble"}
         if self.ranker.enabled != ranker_backbone:
             raise ValueError("ranker enabled state must match the selected backbone")
+        if (
+            self.backbone.kind == "lambdarank"
+            and self.ranker.blend_weight not in {None, 1.0}
+        ):
+            raise ValueError("standalone LambdaRank cannot use an FM blend weight")
         if ranker_backbone and (self.listwise.enabled or enabled_modules):
             raise ValueError("ranker candidates cannot also enable Listwise, History, BPR, or auxiliary tasks")
 

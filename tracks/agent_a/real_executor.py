@@ -125,6 +125,11 @@ class RealCandidateExecutor:
                 num_leaves=int(ranker.num_leaves),
                 min_child_samples=int(ranker.min_child_samples),
                 validation_interval=int(ranker.validation_interval),
+                blend_weights=(
+                    None
+                    if ranker.blend_weight is None
+                    else (float(ranker.blend_weight),)
+                ),
             )
             return outcome
         legacy = {

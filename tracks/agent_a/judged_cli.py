@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 
 from .autonomous import AutonomousResearchLoop, phase_for_ordinal
 from .compliance import JudgedRunCompliance, JudgedRunPolicy, _atomic_json
@@ -161,6 +162,14 @@ def _active(data_dir: Path, state_root: Path):
     policy_data.pop("policy_identity", None)
     policy = JudgedRunPolicy(**policy_data)
     compliance = JudgedRunCompliance(state_dir, policy)
+    repo_root = Path(__file__).resolve().parents[2]
+    code_diff = subprocess.run(
+        ["git", "diff", "--binary", "HEAD", "--", "tracks/agent_a"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     loop = AutonomousResearchLoop(
         state_dir,
         manifest["dataset_fingerprint"],
@@ -168,6 +177,7 @@ def _active(data_dir: Path, state_root: Path):
         max_trials=policy.max_iterations,
         convergence_enabled=True,
         compliance=compliance,
+        research_code_diff=code_diff,
     )
     return state_dir, compliance, loop
 
@@ -200,10 +210,9 @@ def run(
         codegen = CodeGeneratingResearchLoop(loop, compliance, real_executor, provider)
         while loop.store.consumed < target and loop.stop_reason() is None:
             ordinal = loop.store.consumed + 1
-            # Preserve both auditable code-generation autonomy and conditional
-            # Optuna refinement of positive preimplemented modules. Odd trials
-            # use the unified TPE/config runner; even trials use generated code.
-            if ordinal % 2:
+            # Trials 7-14 are the controlled A-05 local screen. Later phases
+            # preserve both unified TPE refinement and code-generation autonomy.
+            if phase_for_ordinal(ordinal) == "single_module_screening" or ordinal % 2:
                 events.append(loop.step(executor))
             else:
                 events.append(codegen.step())
@@ -212,8 +221,11 @@ def run(
     else:
         result = loop.report(events)
         result["research_mode"] = "controlled_anchors_then_llm_code_generation"
+    loop.record_stop_decision()
     result["command"] = "resume" if resume else "run"
     result["audit_log"] = str(compliance.audit_path)
+    _atomic_json(state_dir / "autonomous_report.json", result)
+    compliance.write_audit(loop.store)
     return result
 
 

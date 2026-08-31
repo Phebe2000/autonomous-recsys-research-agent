@@ -99,7 +99,7 @@ class GeneratedSourceSafetyTest(unittest.TestCase):
 
 
 class CodeGeneratingLoopTest(unittest.TestCase):
-    def test_judged_dispatch_alternates_unified_refinement_and_codegen(self):
+    def test_judged_dispatch_keeps_screening_controlled(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data_dir, state_root = root / "data", root / "judged"
@@ -115,8 +115,14 @@ class CodeGeneratingLoopTest(unittest.TestCase):
                 )
             _, _, loop = _active(data_dir, state_root)
             self.assertEqual(loop.store.consumed, 8)
-            self.assertNotEqual(loop.store.get("trial-07")["method"], "llm_generated_numpy_candidate")
-            self.assertEqual(loop.store.get("trial-08")["method"], "llm_generated_numpy_candidate")
+            self.assertEqual(
+                loop.store.get("trial-07")["method"],
+                "train_causal_behavioral_lambdarank_fm_ensemble",
+            )
+            self.assertEqual(
+                loop.store.get("trial-08")["method"],
+                "train_causal_behavioral_lambdarank_fm_ensemble",
+            )
             self.assertEqual(report["research_mode"], "hybrid_optuna_and_llm_code_generation")
 
     def test_provider_infrastructure_failure_counts_once_and_stops(self):

@@ -89,7 +89,7 @@ class CandidateIdentityTest(unittest.TestCase):
         variants = [
             CandidateSpec("sha256:other", config),
             CandidateSpec(FINGERPRINT, config, code_version="v2"),
-            CandidateSpec(FINGERPRINT, config, schema_version=3),
+            CandidateSpec(FINGERPRINT, config, schema_version=4),
         ]
         self.assertTrue(all(item.identity != base.identity for item in variants))
 

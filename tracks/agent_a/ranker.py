@@ -56,6 +56,7 @@ def train_ranker_candidate(
     num_leaves: int = 31,
     min_child_samples: int = 50,
     validation_interval: int = 20,
+    blend_weights: tuple[float, ...] | None = None,
 ) -> tuple[lgb.Booster, TrialOutcome]:
     Xtr, ytr, _ = enc["train"]
     Xva, yva, uva = enc["valid"]
@@ -90,7 +91,12 @@ def train_ranker_candidate(
     )
     baseline_scores = np.asarray(baseline_model.predict(Xva), dtype=np.float64)
     baseline_normalized = normalize_within_user(baseline_scores, uva)
-    alphas = (1.0,) if not ensemble else (0.25, 0.5, 0.75, 1.0)
+    if blend_weights is not None:
+        if not ensemble or not blend_weights or any(not 0 < value <= 1 for value in blend_weights):
+            raise ValueError("explicit blend weights require an ensemble and values in (0, 1]")
+        alphas = tuple(float(value) for value in blend_weights)
+    else:
+        alphas = (1.0,) if not ensemble else (0.25, 0.5, 0.75, 1.0)
     best_metrics = None
     best_iteration = 0
     best_alpha = 1.0
