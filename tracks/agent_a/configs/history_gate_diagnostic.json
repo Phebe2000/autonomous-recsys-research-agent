@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_causal_history_gate_diagnostic",
+  "seed": 0,
+  "fixed": {
+    "encoder": "mean_pool",
+    "last_n": 20,
+    "positive_only": true,
+    "strictly_earlier_time_ms": true,
+    "exclude_tied_timestamps": true,
+    "validation_source": "frozen_train_positives_only",
+    "rolling_validation_feedback": false,
+    "history_dim": 16,
+    "history_embedding_initialization": "independent_copy_of_fresh_current_dataset_baseline_video_embeddings",
+    "history_gate_initial": 0.0,
+    "gate_lr": 0.001,
+    "cold_start": "zero_vector"
+  },
+  "runs": {
+    "G-01": {
+      "train_history_embeddings": false,
+      "history_lr": null,
+      "history_unfreeze_step": 0,
+      "description": "gate-only history branch; history table frozen"
+    },
+    "G-02": {
+      "train_history_embeddings": true,
+      "history_lr": 0.00001,
+      "history_unfreeze_step": 50,
+      "description": "gate-only warmup for 50 steps, then unfreeze history table"
+    }
+  }
+}

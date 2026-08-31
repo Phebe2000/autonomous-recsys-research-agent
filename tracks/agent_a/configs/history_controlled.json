@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_causal_positive_history_mean_pool",
+  "seed": 0,
+  "history": {
+    "encoder": "mean_pool",
+    "positive_only": true,
+    "strictly_earlier_time_ms": true,
+    "exclude_tied_timestamps": true,
+    "validation_source": "frozen_train_positives_only",
+    "rolling_validation_feedback": false,
+    "history_dim": 16,
+    "history_embedding_initialization": "independent_copy_of_fresh_current_dataset_baseline_video_embeddings",
+    "history_gate_initial": 1.0,
+    "cold_start": "zero_vector"
+  },
+  "runs": {
+    "H-01": 20,
+    "H-02": 50,
+    "H-03": 100,
+    "H-04": null
+  }
+}

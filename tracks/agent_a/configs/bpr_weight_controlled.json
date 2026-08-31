@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_same_user_bpr_regularized",
+  "objective": "ListNet + bpr_weight * mean_same_user_BPR",
+  "pair_scope": "all positive-negative pairs within each sampled same-user slate",
+  "seed": 0,
+  "runs": {
+    "B-01": 0.01,
+    "B-02": 0.05,
+    "B-03": 0.10
+  }
+}
