@@ -152,3 +152,43 @@ fingerprint ledger:
   --data-dir KuaiRand-Pure/data \
   --state-root tracks/agent_a/runtime
 ```
+
+## Milestone 6: Optuna TPE autonomous loop
+
+Install the isolated Agent A dependency with:
+
+```bash
+.venv/bin/python -m pip install -r tracks/agent_a/requirements-optuna.txt
+```
+
+`autonomous.py` uses the real Optuna `TPESampler(seed=0)` with persistent SQLite
+storage. ResearchStore remains the only budget authority: every real execution
+is reserved there before training and atomically records its Optuna trial number.
+Exact candidate identities are told back to Optuna without consuming another
+ledger row. The fixed 1–50 phase policy and conditional search ranges live in
+`configs/autonomous_search_space.json`.
+
+Read-only commands never create a study or reserve a trial:
+
+```bash
+.venv/bin/python -m tracks.agent_a.autonomous_cli plan
+.venv/bin/python -m tracks.agent_a.autonomous_cli inspect
+```
+
+Simulation requires an explicit synthetic fingerprint internally and an
+isolated temporary or caller-provided state root. Its outputs are permanently
+marked ineligible for production Top-1:
+
+```bash
+.venv/bin/python -m tracks.agent_a.autonomous_cli simulate --max-trials 50
+```
+
+For a resumable partial simulation, keep the permanent cap fixed and advance the
+per-invocation target, for example `--max-trials 50 --target-trials 10` followed
+by `--max-trials 50 --target-trials 15`. The persistent cap cannot be raised or
+reset after ledger creation.
+
+`run` and `resume` are guarded for a genuinely new content fingerprint and use
+`real_executor.py` to delegate to the existing validation-only trainers. `lock`
+materializes an immutable validation Top-1 manifest. The audited KuaiRand
+fingerprint is explicitly blocked from new autonomous training.

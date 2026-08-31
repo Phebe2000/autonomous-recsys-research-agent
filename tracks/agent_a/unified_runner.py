@@ -150,7 +150,10 @@ class UnifiedTrialRunner:
     def find_exact(self, spec: CandidateSpec, method: str | None = None) -> dict | None:
         expected_hash = hashlib.sha256(canonical_json(spec.ledger_config()).encode()).hexdigest()
         for trial in self.store.trials():
-            if trial["config_hash"] == expected_hash and (method is None or trial["method"] == method):
+            same_identity = trial["config"].get("config_identity") == spec.identity
+            if (trial["config_hash"] == expected_hash or same_identity) and (
+                method is None or trial["method"] == method
+            ):
                 return trial
         return None
 
