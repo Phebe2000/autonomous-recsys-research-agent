@@ -1,0 +1,1 @@
+"""Agent A contract tests."""
