@@ -111,6 +111,8 @@ class JudgedRunCompliance:
                     "policy_identity": self.policy.identity,
                     "started_at": None,
                     "deadline_at": None,
+                    "stopped_at": None,
+                    "stop_reason": None,
                 },
             )
         timing = json.loads(self.timing_path.read_text())
@@ -144,13 +146,49 @@ class JudgedRunCompliance:
         if timing["started_at"] is None:
             return 0.0
         started = datetime.fromisoformat(timing["started_at"])
-        return max(0.0, (self.now() - started).total_seconds())
+        ended = (
+            self.now()
+            if timing.get("stopped_at") is None
+            else datetime.fromisoformat(timing["stopped_at"])
+        )
+        return max(0.0, (ended - started).total_seconds())
 
     def wall_clock_exhausted(self) -> bool:
         timing = json.loads(self.timing_path.read_text())
         if timing["deadline_at"] is None:
             return False
-        return self.now() >= datetime.fromisoformat(timing["deadline_at"])
+        observed = (
+            self.now()
+            if timing.get("stopped_at") is None
+            else datetime.fromisoformat(timing["stopped_at"])
+        )
+        return observed >= datetime.fromisoformat(timing["deadline_at"])
+
+    def freeze_at_recorded_stop(self, store) -> dict[str, Any]:
+        """Freeze elapsed time from the append-only terminal decision.
+
+        This is safe to replay: the first recorded stopping decision is the
+        authority, and a later audit or usage update cannot extend a completed
+        run's wall-clock duration.
+        """
+        timing = json.loads(self.timing_path.read_text())
+        if timing.get("stopped_at") is not None:
+            return timing
+        stopping = next(
+            (
+                decision
+                for decision in store.decisions()
+                if decision["payload"].get("stage") == "stopping"
+                and decision["payload"].get("decision") == "stop_research_loop"
+            ),
+            None,
+        )
+        if stopping is None:
+            return timing
+        timing["stopped_at"] = stopping["created_at"]
+        timing["stop_reason"] = stopping["payload"]["evidence"]["stop_reason"]
+        _atomic_json(self.timing_path, timing)
+        return timing
 
     def execute_with_deadline(self, function):
         """Interrupt a training iteration at the persistent six-hour deadline."""
@@ -200,6 +238,7 @@ class JudgedRunCompliance:
         return usage
 
     def write_audit(self, store) -> dict[str, Any]:
+        self.freeze_at_recorded_stop(store)
         events = store.events()
         decisions = store.decisions()
         by_trial: dict[str, list[dict[str, Any]]] = {}

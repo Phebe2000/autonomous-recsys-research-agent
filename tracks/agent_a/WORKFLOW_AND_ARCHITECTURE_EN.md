@@ -1,8 +1,8 @@
-# Agent A Complete Workflow and System Architecture (English)
+# Agent AI-yoh Complete Workflow and System Architecture (English)
 
 中文版本：[WORKFLOW_AND_ARCHITECTURE.md](WORKFLOW_AND_ARCHITECTURE.md)
 
-This document describes Agent A's official KuaiRand-Pure judged run: organizer
+This document describes Agent AI-yoh's official KuaiRand-Pure judged run: organizer
 constraints, data boundaries, candidate models, autonomous research control
 plane, audit evidence, failure recovery, validation lock, and final label-free
 submission. It also records the actual run completed on 2026-09-01.

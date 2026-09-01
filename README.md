@@ -1,4 +1,102 @@
-# KuaiRand-Pure Starter Kit
+# Agent AI-yoh: Auditable Autonomous Recommender-System Research
+
+Agent AI-yoh is an autonomous machine-learning research system for the
+KuaiRand-Pure logged-exposure ranking benchmark. It preserves the organizer's
+fixed splits and evaluator, maintains a fingerprint-scoped 50-iteration ledger,
+generates and evaluates model candidates using validation feedback only, and
+produces an immutable, label-free final submission.
+
+The locked model is a within-user normalized ensemble of the official FM and a
+causal-behavioral LightGBM LambdaRank model. The judged run converged after 9/50
+iterations and locked validation primary `0.6028629243`.
+
+## Project documentation
+
+- [English workflow and architecture](tracks/agent_a/WORKFLOW_AND_ARCHITECTURE_EN.md)
+- [中文 Workflow 與設計架構](tracks/agent_a/WORKFLOW_AND_ARCHITECTURE.md)
+- [Operator runbook](tracks/agent_a/OPERATOR_RUNBOOK.md)
+- [Devpost written description](tracks/agent_a/devpost/DEVPOST_PROJECT_DESCRIPTION.md)
+- [Run and iteration log](tracks/agent_a/devpost/RUN_AND_ITERATION_LOG.md)
+- [Results and resource usage](tracks/agent_a/devpost/RESULTS_AND_RESOURCES.md)
+- [Final artifact manifest](tracks/agent_a/devpost/ARTIFACT_MANIFEST.md)
+- [Submission checklist](tracks/agent_a/devpost/SUBMISSION_CHECKLIST.md)
+
+## Setup
+
+Requirements: Python 3.9+, the official KuaiRand-Pure files, and macOS `libomp`
+when using LightGBM.
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tracks/agent_a/requirements.txt
+# macOS only
+brew install libomp
+tracks/agent_a/check.sh
+```
+
+Download and extract KuaiRand-Pure as described in the original Starter Kit
+section below. No external training data is used.
+
+## Reproduce the research workflow
+
+The completed production ledger is immutable. For a new clean fingerprint,
+follow the complete runbook. The canonical command sequence is:
+
+```bash
+.venv/bin/python -m tracks.agent_a.judged_cli plan \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/judged_runtime
+.venv/bin/python -m tracks.agent_a.judged_cli init \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/judged_runtime \
+  --epsilon 0.002 --convergence-n 3 --minimum-scored-iterations 9
+.venv/bin/python -m tracks.agent_a.judged_cli run \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/judged_runtime \
+  --provider-model gpt-5.6-sol
+```
+
+After convergence, lock the validation-best checkpoint and generate scores
+without reading test labels:
+
+```bash
+.venv/bin/python -m tracks.agent_a.judged_cli lock \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/judged_runtime
+.venv/bin/python -m tracks.agent_a.finalize submission.csv \
+  --data-dir KuaiRand-Pure/data \
+  --state-root tracks/agent_a/judged_runtime --split test --judged
+.venv/bin/python -m tracks.agent_a.safe_submit_check submission.csv \
+  --data-dir KuaiRand-Pure/data --split test
+```
+
+Never run `submit.py --score --split test`.
+
+## Limitations and future improvements
+
+- The validation gain over the rounded official validation baseline is
+  `+0.0012629`, below the declared `epsilon=0.002`; it is not a significant gain.
+- Hidden-test performance is unknown until the organizer evaluates the locked
+  submission once.
+- The final ensemble was validated at seed 0 only inside the judged run.
+- Standalone LambdaRank underperformed FM; its value was limited to weak
+  complementary signal in the ensemble.
+- KuaiRand-1K and KuaiRand-27K bonus benchmarks were not attempted.
+- Given more time, the next work would be independent-fingerprint replication,
+  resource-efficient feature caching, and predeclared cross-seed verification.
+
+## Team contributions
+
+Team **AI-yoh!** consists of Wang Wei Yu, NI MAN-LING, Lee Hsin-Jui, and Huang
+Yuan-Heng. The team jointly developed and reviewed the project direction,
+validation evidence, compliance boundaries, and final submission. Agent AI-yoh
+implemented, tested, executed, audited, and documented the autonomous research
+pipeline; its automated actions and the team's manual intervention are recorded
+separately in the run logs.
+
+---
+
+# Original KuaiRand-Pure Starter Kit Reference
 
 ## 依赖
 

@@ -77,6 +77,35 @@ class SafeDataBoundaryTest(unittest.TestCase):
 
 
 class CompliancePolicyTest(unittest.TestCase):
+    def test_recorded_stop_freezes_wall_clock_for_later_audits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current = [datetime.now(timezone.utc)]
+            fingerprint = "sha256:synthetic-frozen-wall-clock"
+            policy = JudgedRunPolicy(fingerprint, minimum_scored_iterations=4)
+            compliance = JudgedRunCompliance(root, policy, now=lambda: current[0])
+            store = ResearchStore(root / "research.sqlite3", fingerprint)
+            compliance.start_if_needed()
+            store.record_agent_decision(
+                stage="stopping",
+                decision="stop_research_loop",
+                rationale="fixture convergence",
+                evidence={"stop_reason": "fixture_converged"},
+                alternatives=("continue_beyond_policy",),
+                selected_action="stop",
+                actor="fixture",
+                decision_key="stop:fixture",
+            )
+            first = compliance.write_audit(store)
+            current[0] += timedelta(hours=7)
+            later = compliance.write_audit(store)
+            self.assertEqual(
+                later["timing"]["elapsed_seconds"],
+                first["timing"]["elapsed_seconds"],
+            )
+            self.assertFalse(later["timing"]["wall_clock_exhausted"])
+            self.assertEqual(later["timing"]["stop_reason"], "fixture_converged")
+
     def test_agent_decisions_are_idempotent_hash_chained_and_exported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

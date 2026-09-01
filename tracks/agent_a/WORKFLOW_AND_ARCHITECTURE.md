@@ -1,8 +1,8 @@
-# Agent A 完整 Workflow 與設計架構（中文）
+# Agent AI-yoh 完整 Workflow 與設計架構（中文）
 
 English edition: [WORKFLOW_AND_ARCHITECTURE_EN.md](WORKFLOW_AND_ARCHITECTURE_EN.md)
 
-本文件描述 Agent A 在 KuaiRand-Pure 上的正式 judged-run：官方約束、資料邊界、
+本文件描述 Agent AI-yoh 在 KuaiRand-Pure 上的正式 judged-run：官方約束、資料邊界、
 模型候選、自治研究控制面、稽核證據、失敗恢復、validation lock，以及最終
 label-free submission。它同時記錄 2026-09-01 已完成 run 的實際結果。
 

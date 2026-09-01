@@ -778,6 +778,8 @@ class AutonomousResearchLoop:
             )
 
     def report(self, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        if self.compliance is not None:
+            self.compliance.freeze_at_recorded_stop(self.store)
         best = self.store.best_trial()
         mapping = [
             {
