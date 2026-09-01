@@ -1,0 +1,6 @@
+# Agent A research dependencies; the official starter kit remains NumPy-only.
+lightgbm==4.7.0
+narwhals==2.25.0
+numpy==2.5.2
+optuna==4.9.0
+scipy==1.18.1

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_causal_history_seed_replication",
+  "seeds": [1, 2],
+  "fixed": {
+    "encoder": "mean_pool",
+    "last_n": 20,
+    "positive_only": true,
+    "strictly_earlier_time_ms": true,
+    "exclude_tied_timestamps": true,
+    "validation_source": "frozen_train_positives_only",
+    "rolling_validation_feedback": false,
+    "history_dim": 16,
+    "history_embedding_initialization": "independent_copy_of_fresh_current_dataset_baseline_video_embeddings",
+    "train_history_embeddings": false,
+    "history_lr": null,
+    "history_unfreeze_step": 0,
+    "train_gate": false,
+    "gate_lr": null,
+    "cold_start": "zero_vector"
+  },
+  "variants": {
+    "control": {
+      "history_gate_initial": 0.0,
+      "description": "paired no-history parity control with fixed gate zero"
+    },
+    "history": {
+      "history_gate_initial": -0.05,
+      "description": "paired fixed-gate last-20 causal history candidate"
+    }
+  }
+}

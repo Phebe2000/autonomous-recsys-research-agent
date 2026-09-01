@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_causal_history_fixed_gate",
+  "seed": 0,
+  "fixed": {
+    "encoder": "mean_pool",
+    "last_n": 20,
+    "positive_only": true,
+    "strictly_earlier_time_ms": true,
+    "exclude_tied_timestamps": true,
+    "validation_source": "frozen_train_positives_only",
+    "rolling_validation_feedback": false,
+    "history_dim": 16,
+    "history_embedding_initialization": "independent_copy_of_fresh_current_dataset_baseline_video_embeddings",
+    "train_history_embeddings": false,
+    "history_lr": null,
+    "history_unfreeze_step": 0,
+    "train_gate": false,
+    "gate_lr": null,
+    "cold_start": "zero_vector"
+  },
+  "runs": {
+    "F-01": {
+      "history_gate_initial": -0.02,
+      "description": "fixed negative gate -0.02; history table frozen"
+    },
+    "F-02": {
+      "history_gate_initial": -0.05,
+      "description": "fixed negative gate -0.05; history table frozen"
+    },
+    "F-03": {
+      "history_gate_initial": -0.10,
+      "description": "fixed negative gate -0.10; history table frozen"
+    }
+  }
+}

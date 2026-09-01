@@ -1,0 +1,34 @@
+{
+  "schema_version": 2,
+  "sampler": {"name": "Optuna.TPESampler", "seed": 0},
+  "objective": "validation.primary",
+  "epsilon": 0.002,
+  "convergence_patience": 3,
+  "max_trials": 50,
+  "fixed": {
+    "official_split": true,
+    "official_evaluator": true,
+    "seed": 0,
+    "output": "one_long_view_score_per_row",
+    "test_metrics_allowed": false
+  },
+  "phases": {
+    "controlled_anchors": [1, 6],
+    "single_module_screening": [7, 14],
+    "tpe_conditional_search": [15, 34],
+    "local_refinement": [35, 42],
+    "automatic_ablation": [43, 47],
+    "finalist_verification": [48, 49],
+    "reserve": [50, 50]
+  },
+  "parameters": {
+    "learning_rate": {"type": "float", "low": 3e-7, "high": 3e-6, "log": true},
+    "warmup_steps": {"type": "categorical", "choices": [20, 50, 100]},
+    "history_last_n": {"type": "categorical", "choices": [20, 50, 100]},
+    "history_gate": {"type": "float", "low": -0.1, "high": -0.01},
+    "ranker_learning_rate": {"type": "float", "low": 0.02, "high": 0.08, "log": true},
+    "ranker_num_leaves": {"type": "categorical", "choices": [15, 31, 63]},
+    "ranker_n_estimators": {"type": "categorical", "choices": [100, 160, 240]}
+  },
+  "conditional_policy": "expand a module only after positive validation gain over its fingerprint Listwise anchor"
+}

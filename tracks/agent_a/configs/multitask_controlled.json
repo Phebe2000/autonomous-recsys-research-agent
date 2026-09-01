@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_multitask_auxiliary",
+  "seed": 0,
+  "fixed": {
+    "architecture": "shared_fm_embeddings_with_task_specific_linear_heads",
+    "inference_output": "long_view_ranking_score_only",
+    "auxiliary_source": "training_raw_logs_only",
+    "head_lr": 0.001,
+    "play_time_transform": "train_fit_log1p_zscore",
+    "play_time_loss": "huber",
+    "huber_delta": 1.0,
+    "history_enabled": false,
+    "bpr_enabled": false
+  },
+  "runs": {
+    "M-01": {
+      "is_click_weight": 0.01,
+      "play_time_weight": 0.0,
+      "description": "small click BCE auxiliary weight"
+    },
+    "M-02": {
+      "is_click_weight": 0.05,
+      "play_time_weight": 0.0,
+      "description": "medium click BCE auxiliary weight"
+    },
+    "M-03": {
+      "is_click_weight": 0.0,
+      "play_time_weight": 0.01,
+      "description": "small normalized play-time Huber auxiliary weight"
+    },
+    "M-04": {
+      "is_click_weight": 0.01,
+      "play_time_weight": 0.01,
+      "description": "joint small click and play-time auxiliary weights"
+    }
+  }
+}

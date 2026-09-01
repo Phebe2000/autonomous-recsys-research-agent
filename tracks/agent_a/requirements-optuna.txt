@@ -1,0 +1,3 @@
+# Agent A autonomous research loop only. Official kit dependencies remain unchanged.
+# Provenance: PyPI stable release, https://pypi.org/project/optuna/4.9.0/
+optuna==4.9.0

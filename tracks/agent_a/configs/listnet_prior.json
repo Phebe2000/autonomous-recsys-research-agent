@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "method": "fm_user_soft_target_listnet_finetune",
+  "prior_policy": "configuration_and_method_only",
+  "provenance": "prior validation-best recipe from the predecessor project; no checkpoint, embedding, artifact, or score transferred",
+  "initialization": "fresh_validation_best_official_fm_on_current_dataset",
+  "seed": 0,
+  "hyperparameters": {
+    "k": 16,
+    "lr": 1e-06,
+    "optimizer": "adamw",
+    "weight_decay": 0.0,
+    "score_temperature": 1.0,
+    "target_temperature": 0.5,
+    "metric_weighting": true,
+    "warmup_steps": 50,
+    "update_embeddings": true,
+    "user_batch_size": 256,
+    "validation_interval": 10,
+    "max_epochs": 2,
+    "patience_checks": 6,
+    "hard_negative_cap": 64
+  }
+}
